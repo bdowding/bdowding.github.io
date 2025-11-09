@@ -1,1 +1,117 @@
-Hello world
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Piano MIDI & Keyboard Stave</title>
+    <script src="https://unpkg.com/vexflow@4.0.3/build/cjs/vexflow.js"></script>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 40px; }
+        #stave { margin-top: 20px; }
+        #keyboard { margin-top: 20px; }
+        .key { display: inline-block; width: 40px; height: 120px; background: #eee; border: 1px solid #ccc; text-align: center; line-height: 120px; font-size: 20px; margin-right: 2px; cursor: pointer; }
+        .key.active { background: #ffd; }
+    </style>
+</head>
+<body>
+    <h1>Piano MIDI & Keyboard Stave</h1>
+    <div>
+        <button id="midi-btn">Connect MIDI</button>
+        <span id="midi-status">MIDI not connected</span>
+    </div>
+    <div id="keyboard">
+        <div class="key" data-note="C4">A</div>
+        <div class="key" data-note="D4">S</div>
+        <div class="key" data-note="E4">D</div>
+        <div class="key" data-note="F4">F</div>
+        <div class="key" data-note="G4">G</div>
+        <div class="key" data-note="A4">H</div>
+        <div class="key" data-note="B4">J</div>
+        <div class="key" data-note="C5">K</div>
+    </div>
+    <div id="stave"></div>
+    <script>
+        // VexFlow setup
+        const VF = Vex.Flow;
+        let notes = [];
+        let renderer, context, stave;
+        function drawStave() {
+            document.getElementById('stave').innerHTML = '';
+            renderer = new VF.Renderer(document.getElementById('stave'), VF.Renderer.Backends.SVG);
+            renderer.resize(500, 150);
+            context = renderer.getContext();
+            stave = new VF.Stave(10, 40, 480);
+            stave.addClef('treble').addTimeSignature('4/4');
+            stave.setContext(context).draw();
+            if (notes.length > 0) {
+                const vfNotes = notes.map(n => new VF.StaveNote({ clef: 'treble', keys: [n], duration: 'q' }));
+                VF.Formatter.FormatAndDraw(context, stave, vfNotes);
+            }
+        }
+        drawStave();
+        // Reset every 10 seconds
+        setInterval(() => { notes = []; drawStave(); }, 10000);
+        // Keyboard mapping
+        const keyMap = {
+            'A': 'C4', 'S': 'D4', 'D': 'E4', 'F': 'F4', 'G': 'G4', 'H': 'A4', 'J': 'B4', 'K': 'C5'
+        };
+        function keyNoteToVexflow(note) {
+            // Converts 'C4' to 'c/4', etc.
+            if (!note || note.length < 2) return null;
+            const letter = note[0].toLowerCase();
+            let octave = note.slice(-1);
+            let accidental = '';
+            if (note.length === 3) accidental = note[1] === '#' ? '#' : '';
+            return letter + accidental + '/' + octave;
+        }
+        document.addEventListener('keydown', e => {
+            const note = keyMap[e.key.toUpperCase()];
+            if (note) {
+                const vfNote = keyNoteToVexflow(note);
+                if (vfNote) {
+                    notes.push(vfNote);
+                    drawStave();
+                }
+                document.querySelector(`[data-note="${note}"]`).classList.add('active');
+            }
+        });
+        document.addEventListener('keyup', e => {
+            const note = keyMap[e.key.toUpperCase()];
+            if (note) {
+                document.querySelector(`[data-note="${note}"]`).classList.remove('active');
+            }
+        });
+        // MIDI setup
+        let midiAccess = null;
+        document.getElementById('midi-btn').onclick = async function() {
+            if (navigator.requestMIDIAccess) {
+                midiAccess = await navigator.requestMIDIAccess();
+                document.getElementById('midi-status').textContent = 'MIDI connected';
+                for (let input of midiAccess.inputs.values()) {
+                    input.onmidimessage = function(msg) {
+                        const [cmd, noteNum, velocity] = msg.data;
+                        if (cmd === 144 && velocity > 0) { // note on
+                            const noteName = midiNoteToVexflow(noteNum);
+                            if (noteName) {
+                                notes.push(noteName);
+                                drawStave();
+                            }
+                        }
+                    };
+                }
+            } else {
+                document.getElementById('midi-status').textContent = 'Web MIDI API not supported';
+            }
+        };
+        function midiNoteToVexflow(num) {
+            // MIDI note numbers for C4=60, D4=62, E4=64, F4=65, G4=67, A4=69, B4=71, C5=72
+            const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
+            const octave = Math.floor(num / 12) - 1;
+            const name = noteNames[num % 12];
+            // VexFlow expects e.g. 'c/4', 'd/4', etc.
+            if (name.length === 1) return name.toLowerCase() + '/' + octave;
+            if (name.length === 2) return name[0].toLowerCase() + '#' + '/' + octave;
+            return null;
+        }
+    </script>
+</body>
+</html>
