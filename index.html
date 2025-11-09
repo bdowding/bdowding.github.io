@@ -2,23 +2,32 @@
 <html lang="en">
 <head>
     <meta charset="UTF-8">
-    <title>Piano MIDI & Keyboard Stave</title>
-    <script src="https://unpkg.com/vexflow@4.0.3/build/cjs/vexflow.js"></script>
+    <title>Piano Keyboard Delay Scatter</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <style>
         body { font-family: Arial, sans-serif; margin: 40px; }
-        #stave { margin-top: 20px; }
-        #keyboard { margin-top: 20px; }
-        .key { display: inline-block; width: 40px; height: 120px; background: #eee; border: 1px solid #ccc; text-align: center; line-height: 120px; font-size: 20px; margin-right: 2px; cursor: pointer; }
-        .key.active { background: #ffd; }
     </style>
 </head>
 <body>
-    <h1>Piano MIDI & Keyboard Stave</h1>
+    <h1>Piano Keyboard Delay Scatter</h1>
     <div>
         <button id="midi-btn">Connect MIDI</button>
         <span id="midi-status">MIDI not connected</span>
     </div>
-    <div id="keyboard">
+    <div style="margin-top:40px">
+        <canvas id="scatter" width="600" height="150"></canvas>
+    </div>
+    <div style="margin-top:40px">
+        <canvas id="scatterLeft" width="600" height="150"></canvas>
+    </div>
+    <div id="keyboard" style="display:none">
+        <div class="key" data-note="C3">Z</div>
+        <div class="key" data-note="D3">X</div>
+        <div class="key" data-note="E3">C</div>
+        <div class="key" data-note="F3">V</div>
+        <div class="key" data-note="G3">B</div>
+        <div class="key" data-note="A3">N</div>
+        <div class="key" data-note="B3">M</div>
         <div class="key" data-note="C4">A</div>
         <div class="key" data-note="D4">S</div>
         <div class="key" data-note="E4">D</div>
@@ -28,58 +37,13 @@
         <div class="key" data-note="B4">J</div>
         <div class="key" data-note="C5">K</div>
     </div>
-    <div id="stave"></div>
     <script>
-        // VexFlow setup
-        const VF = Vex.Flow;
-        let notes = [];
-        let renderer, context, stave;
-        function drawStave() {
-            document.getElementById('stave').innerHTML = '';
-            renderer = new VF.Renderer(document.getElementById('stave'), VF.Renderer.Backends.SVG);
-            renderer.resize(500, 150);
-            context = renderer.getContext();
-            stave = new VF.Stave(10, 40, 480);
-            stave.addClef('treble').addTimeSignature('4/4');
-            stave.setContext(context).draw();
-            if (notes.length > 0) {
-                const vfNotes = notes.map(n => new VF.StaveNote({ clef: 'treble', keys: [n], duration: 'q' }));
-                VF.Formatter.FormatAndDraw(context, stave, vfNotes);
-            }
-        }
-        drawStave();
+        let noteTimes = [];
+        let noteKeys = [];
+        let scatterChart = null;
+        let scatterChartLeft = null;
         // Reset every 10 seconds
-        setInterval(() => { notes = []; drawStave(); }, 10000);
-        // Keyboard mapping
-        const keyMap = {
-            'A': 'C4', 'S': 'D4', 'D': 'E4', 'F': 'F4', 'G': 'G4', 'H': 'A4', 'J': 'B4', 'K': 'C5'
-        };
-        function keyNoteToVexflow(note) {
-            // Converts 'C4' to 'c/4', etc.
-            if (!note || note.length < 2) return null;
-            const letter = note[0].toLowerCase();
-            let octave = note.slice(-1);
-            let accidental = '';
-            if (note.length === 3) accidental = note[1] === '#' ? '#' : '';
-            return letter + accidental + '/' + octave;
-        }
-        document.addEventListener('keydown', e => {
-            const note = keyMap[e.key.toUpperCase()];
-            if (note) {
-                const vfNote = keyNoteToVexflow(note);
-                if (vfNote) {
-                    notes.push(vfNote);
-                    drawStave();
-                }
-                document.querySelector(`[data-note="${note}"]`).classList.add('active');
-            }
-        });
-        document.addEventListener('keyup', e => {
-            const note = keyMap[e.key.toUpperCase()];
-            if (note) {
-                document.querySelector(`[data-note="${note}"]`).classList.remove('active');
-            }
-        });
+        setInterval(() => { noteTimes = []; noteKeys = []; drawScatter(); }, 10000);
         // MIDI setup
         let midiAccess = null;
         document.getElementById('midi-btn').onclick = async function() {
@@ -89,12 +53,12 @@
                 for (let input of midiAccess.inputs.values()) {
                     input.onmidimessage = function(msg) {
                         const [cmd, noteNum, velocity] = msg.data;
-                        if (cmd === 144 && velocity > 0) { // note on
-                            const noteName = midiNoteToVexflow(noteNum);
-                            if (noteName) {
-                                notes.push(noteName);
-                                drawStave();
-                            }
+                        if (cmd === 144 && velocity > 0) {
+                            // Only support keyboard for hand logic for now
+                            // Could add MIDI mapping if needed
+                            noteTimes.push(Date.now());
+                            noteKeys.push(null); // MIDI notes not mapped
+                            drawScatter();
                         }
                     };
                 }
@@ -102,16 +66,184 @@
                 document.getElementById('midi-status').textContent = 'Web MIDI API not supported';
             }
         };
-        function midiNoteToVexflow(num) {
-            // MIDI note numbers for C4=60, D4=62, E4=64, F4=65, G4=67, A4=69, B4=71, C5=72
-            const noteNames = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
-            const octave = Math.floor(num / 12) - 1;
-            const name = noteNames[num % 12];
-            // VexFlow expects e.g. 'c/4', 'd/4', etc.
-            if (name.length === 1) return name.toLowerCase() + '/' + octave;
-            if (name.length === 2) return name[0].toLowerCase() + '#' + '/' + octave;
-            return null;
+        const keyMap = {
+            'Z': 'C3', 'X': 'D3', 'C': 'E3', 'V': 'F3', 'B': 'G3', 'N': 'A3', 'M': 'B3',
+            'A': 'C4', 'S': 'D4', 'D': 'E4', 'F': 'F4', 'G': 'G4', 'H': 'A4', 'J': 'B4', 'K': 'C5'
+        };
+        // MIDI note numbers for C3=48, C#3=49, D3=50, ..., C4=60, ..., C5=72
+        function noteToMidi(note) {
+            const noteNames = { 'C':0, 'C#':1, 'D':2, 'D#':3, 'E':4, 'F':5, 'F#':6, 'G':7, 'G#':8, 'A':9, 'A#':10, 'B':11 };
+            let match = note.match(/^([A-G]#?)([0-9])$/);
+            if (!match) return null;
+            let name = match[1];
+            let octave = parseInt(match[2]);
+            return 12 * octave + noteNames[name];
         }
+        function halfStepDistance(note1, note2) {
+            let midi1 = noteToMidi(note1);
+            let midi2 = noteToMidi(note2);
+            if (midi1 === null || midi2 === null) return null;
+            return Math.abs(midi2 - midi1);
+        }
+        function assignHands(keys) {
+            if (keys.length === 0) return [];
+            let hands = [];
+            let rightHand = [keys[0]];
+            let leftHand = [];
+            hands.push('right');
+            for (let i = 1; i < keys.length; i++) {
+                let note = keys[i];
+                if (!note) { hands.push('unknown'); continue; }
+                // If left hand is empty, use right hand rules
+                if (leftHand.length === 0) {
+                    let prevNote = rightHand[rightHand.length-1];
+                    let dist = halfStepDistance(prevNote, note);
+                    if (dist !== null && dist <= 10) { // 5 steps = 10 half-steps
+                        hands.push('right');
+                        rightHand.push(note);
+                    } else {
+                        hands.push('left');
+                        leftHand.push(note);
+                    }
+                } else {
+                    // Compare to most recent note of each hand
+                    let prevRight = rightHand[rightHand.length-1];
+                    let prevLeft = leftHand[leftHand.length-1];
+                    let distRight = halfStepDistance(prevRight, note);
+                    let distLeft = halfStepDistance(prevLeft, note);
+                    if (distRight <= distLeft) {
+                        hands.push('right');
+                        rightHand.push(note);
+                    } else {
+                        hands.push('left');
+                        leftHand.push(note);
+                    }
+                }
+            }
+            return hands;
+        }
+        document.addEventListener('keydown', e => {
+            const note = keyMap[e.key.toUpperCase()];
+            if (note) {
+                noteTimes.push(Date.now());
+                noteKeys.push(note);
+                drawScatter();
+            }
+        });
+        document.addEventListener('keyup', e => {
+            // No UI to update, but could be used for future features
+        });
+        function assignHands(keys) {
+            // Implements the hand assignment rules
+            if (keys.length === 0) return [];
+            let hands = [];
+            let rightHand = [keys[0]];
+            let leftHand = [];
+            hands.push('right');
+            for (let i = 1; i < keys.length; i++) {
+                let note = keys[i];
+                if (!note) { hands.push('unknown'); continue; }
+                // If left hand is empty, use right hand rules
+                if (leftHand.length === 0) {
+                    let prevNote = rightHand[rightHand.length-1];
+                    let dist = halfStepDistance(prevNote, note);
+                    if (dist !== null && dist <= 10) { // 5 steps = 10 half-steps
+                        hands.push('right');
+                        rightHand.push(note);
+                    } else {
+                        hands.push('left');
+                        leftHand.push(note);
+                    }
+                } else {
+                    // Compare to most recent note of each hand
+                    let prevRight = rightHand[rightHand.length-1];
+                    let prevLeft = leftHand[leftHand.length-1];
+                    let distRight = halfStepDistance(prevRight, note);
+                    let distLeft = halfStepDistance(prevLeft, note);
+                    if (distRight <= distLeft) {
+                        hands.push('right');
+                        rightHand.push(note);
+                    } else {
+                        hands.push('left');
+                        leftHand.push(note);
+                    }
+                }
+            }
+            return hands;
+        }
+        function drawScatter() {
+            // Calculate delays and assign hands
+            let dataRight = [];
+            let dataLeft = [];
+            let maxDelayR = 1000;
+            let maxDelayL = 1000;
+            let hands = assignHands(noteKeys);
+            for (let i = 1; i < noteTimes.length; i++) {
+                let delay = noteTimes[i] - noteTimes[i-1];
+                if (hands[i] === 'right') {
+                    dataRight.push({x: noteTimes[i] - noteTimes[0], y: delay});
+                    if (delay > maxDelayR) maxDelayR = Math.ceil(delay / 1000) * 1000;
+                } else if (hands[i] === 'left') {
+                    dataLeft.push({x: noteTimes[i] - noteTimes[0], y: delay});
+                    if (delay > maxDelayL) maxDelayL = Math.ceil(delay / 1000) * 1000;
+                }
+            }
+            // Right hand chart
+            const ctx = document.getElementById('scatter').getContext('2d');
+            if (scatterChart) scatterChart.destroy();
+            scatterChart = new Chart(ctx, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Right Hand Delay (ms)',
+                        data: dataRight,
+                        backgroundColor: 'rgba(0,123,255,0.7)',
+                    }]
+                },
+                options: {
+                    animation: false,
+                    plugins: { title: { display: false } },
+                    scales: {
+                        x: {
+                            min: 0,
+                            max: 10000
+                        },
+                        y: {
+                            min: 0,
+                            max: maxDelayR
+                        }
+                    }
+                }
+            });
+            // Left hand chart
+            const ctxL = document.getElementById('scatterLeft').getContext('2d');
+            if (scatterChartLeft) scatterChartLeft.destroy();
+            scatterChartLeft = new Chart(ctxL, {
+                type: 'scatter',
+                data: {
+                    datasets: [{
+                        label: 'Left Hand Delay (ms)',
+                        data: dataLeft,
+                        backgroundColor: 'rgba(255,123,0,0.7)',
+                    }]
+                },
+                options: {
+                    animation: false,
+                    plugins: { title: { display: false } },
+                    scales: {
+                        x: {
+                            min: 0,
+                            max: 10000
+                        },
+                        y: {
+                            min: 0,
+                            max: maxDelayL
+                        }
+                    }
+                }
+            });
+        }
+        drawScatter();
     </script>
 </body>
 </html>
