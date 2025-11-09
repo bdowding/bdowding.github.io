@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <title>Piano Keyboard Delay Scatter</title>
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <style>
-        body { font-family: Arial, sans-serif; margin: 40px; }
     </style>
 </head>
 <body>
@@ -15,11 +15,12 @@
         <span id="midi-status">MIDI not connected</span>
     </div>
     <div style="margin-top:40px">
-        <canvas id="scatter" width="600" height="150"></canvas>
+        <canvas id="scatter" style="width:100%; height:50vh; display:block;"></canvas>
     </div>
     <div style="margin-top:40px">
-        <canvas id="scatterLeft" width="600" height="150"></canvas>
+        <canvas id="scatterLeft" style="width:100%; height:50vh; display:block;"></canvas>
     </div>
+    <div id="score" style="position: fixed; top: 10px; left: 10px; background: rgba(255,255,255,0.9); padding: 10px; border-radius: 5px; font-family: monospace; white-space: pre-line; z-index: 1000;"></div>
     <div id="keyboard" style="display:none">
         <div class="key" data-note="C3">Z</div>
         <div class="key" data-note="D3">X</div>
@@ -40,10 +41,135 @@
     <script>
         let noteTimes = [];
         let noteKeys = [];
+        let noteVelocities = [];
         let scatterChart = null;
         let scatterChartLeft = null;
-        // Reset every 10 seconds
-        setInterval(() => { noteTimes = []; noteKeys = []; drawScatter(); }, 10000);
+        let lastInputTime = null;
+        let scoreTimeout = null;
+        
+        function calculateLineOfBestFit(data, forceZeroGradient = false) {
+            if (data.length < 2) return null;
+            let n = data.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumXX = 0;
+            
+            for (let point of data) {
+                sumX += point.x;
+                sumY += point.y;
+                sumXY += point.x * point.y;
+                sumXX += point.x * point.x;
+            }
+            
+            let slope, intercept;
+            if (forceZeroGradient) {
+                slope = 0;
+                intercept = sumY / n; // Mean Y value
+            } else {
+                slope = (n * sumXY - sumX * sumY) / (n * sumXX - sumX * sumX);
+                intercept = (sumY - slope * sumX) / n;
+            }
+            
+            // Calculate R-squared
+            let meanY = sumY / n;
+            let ssTotal = 0, ssRes = 0;
+            for (let point of data) {
+                let predicted = slope * point.x + intercept;
+                ssTotal += Math.pow(point.y - meanY, 2);  // Total sum of squares
+                ssRes += Math.pow(point.y - predicted, 2); // Residual sum of squares
+            }
+            
+            // R² = 1 - (SS_res / SS_tot)
+            // Handle edge cases:
+            // - If ssTotal = 0 (all y values are the same), R² should be 1 if fit is perfect, NaN otherwise
+            // - If ssRes = 0 (perfect fit), R² = 1
+            // - R² can be negative if the fit is worse than just using the mean
+            
+            let rSquared;
+            if (ssTotal === 0) {
+                // All y values are identical
+                rSquared = (ssRes === 0) ? 1 : 0; // Perfect if no residuals, otherwise 0
+            } else {
+                rSquared = 1 - (ssRes / ssTotal);
+                // R² can be negative if the model is worse than the mean
+                // We'll keep negative values for diagnostic purposes but clamp in scoring
+            }
+            
+            return { slope, intercept, rSquared };
+        }
+        
+        function createLineData(fit, minX, maxX) {
+            if (!fit) return [];
+            return [
+                { x: minX, y: fit.slope * minX + fit.intercept },
+                { x: maxX, y: fit.slope * maxX + fit.intercept }
+            ];
+        }
+        
+        function showScore() {
+            let hands = assignHands(noteKeys);
+            let dataRightDelay = [];
+            let dataLeftDelay = [];
+            let dataRightVelocity = [];
+            let dataLeftVelocity = [];
+            let lastTimeRight = null;
+            let lastTimeLeft = null;
+            
+            for (let i = 0; i < noteTimes.length; i++) {
+                let hand = hands[i];
+                let time = noteTimes[i];
+                let velocity = noteVelocities[i];
+                if (hand === 'right') {
+                    if (lastTimeRight !== null) {
+                        let delay = time - lastTimeRight;
+                        dataRightDelay.push({x: time - noteTimes[0], y: delay});
+                    }
+                    dataRightVelocity.push({x: time - noteTimes[0], y: velocity});
+                    lastTimeRight = time;
+                } else if (hand === 'left') {
+                    if (lastTimeLeft !== null) {
+                        let delay = time - lastTimeLeft;
+                        dataLeftDelay.push({x: time - noteTimes[0], y: delay});
+                    }
+                    dataLeftVelocity.push({x: time - noteTimes[0], y: velocity});
+                    lastTimeLeft = time;
+                }
+            }
+            
+            // Calculate fits
+            let rightDelayFit = calculateLineOfBestFit(dataRightDelay, true); // Force zero gradient for timing
+            let leftDelayFit = calculateLineOfBestFit(dataLeftDelay, true);
+            let rightVelocityFit = calculateLineOfBestFit(dataRightVelocity, false);
+            let leftVelocityFit = calculateLineOfBestFit(dataLeftVelocity, false);
+            
+            // Store fits globally for chart rendering
+            window.chartFits = {
+                rightDelayFit,
+                leftDelayFit,
+                rightVelocityFit,
+                leftVelocityFit
+            };
+            
+            // Redraw charts with fit lines
+            drawScatter();
+        }
+        
+        function handleNoteInput(note, velocity = 1 + Math.random() * 0.3) {
+            const now = Date.now();
+            if (lastInputTime && now - lastInputTime > 2000) {
+                noteTimes = [];
+                noteKeys = [];
+                noteVelocities = [];
+                window.chartFits = null;
+            }
+            
+            if (scoreTimeout) clearTimeout(scoreTimeout);
+            scoreTimeout = setTimeout(showScore, 2000);
+            
+            lastInputTime = now;
+            noteTimes.push(now);
+            noteKeys.push(note);
+            noteVelocities.push(velocity);
+            drawScatter();
+        }
         // MIDI setup
         let midiAccess = null;
         document.getElementById('midi-btn').onclick = async function() {
@@ -54,11 +180,10 @@
                     input.onmidimessage = function(msg) {
                         const [cmd, noteNum, velocity] = msg.data;
                         if (cmd === 144 && velocity > 0) {
-                            // Only support keyboard for hand logic for now
-                            // Could add MIDI mapping if needed
-                            noteTimes.push(Date.now());
-                            noteKeys.push(null); // MIDI notes not mapped
-                            drawScatter();
+                            const midiToNote = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+                            let octave = Math.floor(noteNum / 12) - 1;
+                            let name = midiToNote[noteNum % 12] + octave;
+                            handleNoteInput(name, velocity / 127);
                         }
                     };
                 }
@@ -91,9 +216,11 @@
             let rightHand = [keys[0]];
             let leftHand = [];
             hands.push('right');
+            
             for (let i = 1; i < keys.length; i++) {
                 let note = keys[i];
                 if (!note) { hands.push('unknown'); continue; }
+                
                 // If left hand is empty, use right hand rules
                 if (leftHand.length === 0) {
                     let prevNote = rightHand[rightHand.length-1];
@@ -104,19 +231,68 @@
                     } else {
                         hands.push('left');
                         leftHand.push(note);
+                        
+                        // Reassign previous notes based on new ranges
+                        let rightMidis = rightHand.map(noteToMidi);
+                        let leftMidis = leftHand.map(noteToMidi);
+                        let rightMin = Math.min(...rightMidis);
+                        let leftMax = Math.max(...leftMidis);
+                        
+                        // If ranges overlap, reassign notes
+                        if (rightMin <= leftMax) {
+                            let allNotes = [];
+                            let allIndices = [];
+                            for (let j = 0; j <= i; j++) {
+                                if (keys[j]) {
+                                    allNotes.push({note: keys[j], index: j, midi: noteToMidi(keys[j])});
+                                }
+                            }
+                            allNotes.sort((a, b) => a.midi - b.midi);
+                            
+                            // Split at midpoint
+                            let midpoint = Math.floor(allNotes.length / 2);
+                            rightHand = [];
+                            leftHand = [];
+                            
+                            for (let j = 0; j < allNotes.length; j++) {
+                                if (j < midpoint) {
+                                    leftHand.push(allNotes[j].note);
+                                    hands[allNotes[j].index] = 'left';
+                                } else {
+                                    rightHand.push(allNotes[j].note);
+                                    hands[allNotes[j].index] = 'right';
+                                }
+                            }
+                        }
                     }
                 } else {
-                    // Compare to most recent note of each hand
-                    let prevRight = rightHand[rightHand.length-1];
-                    let prevLeft = leftHand[leftHand.length-1];
-                    let distRight = halfStepDistance(prevRight, note);
-                    let distLeft = halfStepDistance(prevLeft, note);
-                    if (distRight <= distLeft) {
+                    // Both hands active - assign to closest hand or enforce ranges
+                    let rightMidis = rightHand.map(noteToMidi);
+                    let leftMidis = leftHand.map(noteToMidi);
+                    let rightMin = Math.min(...rightMidis);
+                    let leftMax = Math.max(...leftMidis);
+                    let noteMidi = noteToMidi(note);
+                    
+                    if (noteMidi > rightMin) {
                         hands.push('right');
                         rightHand.push(note);
-                    } else {
+                    } else if (noteMidi < leftMax) {
                         hands.push('left');
                         leftHand.push(note);
+                    } else {
+                        // In overlap zone - assign to closest recent note
+                        let prevRight = rightHand[rightHand.length-1];
+                        let prevLeft = leftHand[leftHand.length-1];
+                        let distRight = halfStepDistance(prevRight, note);
+                        let distLeft = halfStepDistance(prevLeft, note);
+                        
+                        if (distRight <= distLeft) {
+                            hands.push('right');
+                            rightHand.push(note);
+                        } else {
+                            hands.push('left');
+                            leftHand.push(note);
+                        }
                     }
                 }
             }
@@ -125,123 +301,292 @@
         document.addEventListener('keydown', e => {
             const note = keyMap[e.key.toUpperCase()];
             if (note) {
-                noteTimes.push(Date.now());
-                noteKeys.push(note);
-                drawScatter();
+                handleNoteInput(note);
             }
         });
         document.addEventListener('keyup', e => {
             // No UI to update, but could be used for future features
         });
-        function assignHands(keys) {
-            // Implements the hand assignment rules
-            if (keys.length === 0) return [];
-            let hands = [];
-            let rightHand = [keys[0]];
-            let leftHand = [];
-            hands.push('right');
-            for (let i = 1; i < keys.length; i++) {
-                let note = keys[i];
-                if (!note) { hands.push('unknown'); continue; }
-                // If left hand is empty, use right hand rules
-                if (leftHand.length === 0) {
-                    let prevNote = rightHand[rightHand.length-1];
-                    let dist = halfStepDistance(prevNote, note);
-                    if (dist !== null && dist <= 10) { // 5 steps = 10 half-steps
-                        hands.push('right');
-                        rightHand.push(note);
-                    } else {
-                        hands.push('left');
-                        leftHand.push(note);
-                    }
-                } else {
-                    // Compare to most recent note of each hand
-                    let prevRight = rightHand[rightHand.length-1];
-                    let prevLeft = leftHand[leftHand.length-1];
-                    let distRight = halfStepDistance(prevRight, note);
-                    let distLeft = halfStepDistance(prevLeft, note);
-                    if (distRight <= distLeft) {
-                        hands.push('right');
-                        rightHand.push(note);
-                    } else {
-                        hands.push('left');
-                        leftHand.push(note);
-                    }
+        function calculateScore(fit, dataPoints) {
+            // Calculate score using Root Mean Squared Error (RMSE) for both timing and velocity
+            
+            if (!fit || !dataPoints || dataPoints.length < 2) {
+                return 10; // Minimum score for insufficient data
+            }
+            
+            // Calculate RMSE between actual points and fit line
+            let sumSquaredErrors = 0;
+            for (let point of dataPoints) {
+                const predicted = fit.slope * point.x + fit.intercept;
+                const error = point.y - predicted;
+                sumSquaredErrors += error * error;
+            }
+            const rmse = Math.sqrt(sumSquaredErrors / dataPoints.length);
+            
+            // Determine if this is timing data or velocity data for appropriate scaling
+            const yValues = dataPoints.map(p => p.y);
+            const meanY = yValues.reduce((a, b) => a + b, 0) / yValues.length;
+            const isVelocityData = meanY >= 0 && meanY <= 1.5;
+            
+            // Convert RMSE to score (lower RMSE = higher score)
+            let score;
+            if (isVelocityData) {
+                // VELOCITY: RMSE typically 0-0.5, scale accordingly
+                // RMSE = 0.0 → 100%, RMSE = 0.1 → ~60%, RMSE = 0.2 → ~25%
+                score = 100 * Math.exp(-10 * rmse);
+            } else {
+                // TIMING: RMSE typically 0-200ms, scale accordingly  
+                // RMSE = 0ms → 100%, RMSE = 50ms → ~60%, RMSE = 100ms → ~25%
+                score = 100 * Math.exp(-0.02 * rmse);
+            }
+            
+            // Apply minimum floor and maximum ceiling
+            return Math.max(10, Math.min(100, score));
+        }
+        
+        function createChart(canvasId, hand, datasets, maxDelay, maxTime, fits) {
+            const ctx = document.getElementById(canvasId).getContext('2d');
+            const chartVar = hand === 'right' ? 'scatterChart' : 'scatterChartLeft';
+            
+            // Destroy existing chart
+            if (window[chartVar]) window[chartVar].destroy();
+            
+            // Add fit lines if available
+            if (fits) {
+                const delayFit = hand === 'right' ? fits.rightDelayFit : fits.leftDelayFit;
+                const velocityFit = hand === 'right' ? fits.rightVelocityFit : fits.leftVelocityFit;
+                const delayColor = hand === 'right' ? 'rgba(0,123,255,1)' : 'rgba(255,123,0,1)';
+                const velocityColor = hand === 'right' ? 'rgba(0,255,123,1)' : 'rgba(255,0,123,1)';
+                
+                if (delayFit && datasets[0].data.length > 0) {
+                    datasets.push({
+                        label: 'Timing Fit (0% gradient)',
+                        data: createLineData(delayFit, 0, maxTime),
+                        borderColor: delayColor,
+                        backgroundColor: 'transparent',
+                        type: 'line',
+                        pointRadius: 0,
+                        borderWidth: 2,
+                        yAxisID: 'y',
+                        showLine: true,
+                        fill: false,
+                        pointHoverRadius: 0,
+                        pointHitRadius: 0,
+                        hidden: false,
+                        skipLegend: true
+                    });
+                }
+                
+                if (velocityFit && datasets[1].data.length > 0) {
+                    let gradientPerNote = velocityFit.slope * 1000;
+                    datasets.push({
+                        label: `Velocity Fit (${(gradientPerNote * 100).toFixed(2)}% per note)`,
+                        data: createLineData(velocityFit, 0, maxTime),
+                        borderColor: velocityColor,
+                        backgroundColor: 'transparent',
+                        type: 'line',
+                        pointRadius: 0,
+                        borderWidth: 2,
+                        yAxisID: 'y1',
+                        showLine: true,
+                        fill: false,
+                        pointHoverRadius: 0,
+                        pointHitRadius: 0,
+                        hidden: false,
+                        skipLegend: true
+                    });
                 }
             }
-            return hands;
+            
+            // Create chart
+            window[chartVar] = new Chart(ctx, {
+                type: 'scatter',
+                data: { datasets: datasets },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    animation: false,
+                    plugins: {
+                        title: { display: false },
+                        legend: {
+                            labels: {
+                                filter: function(legendItem, chartData) {
+                                    const dataset = chartData.datasets[legendItem.datasetIndex];
+                                    return !dataset.skipLegend;
+                                }
+                            }
+                        },
+                        datalabels: {
+                            align: 'top',
+                            font: { weight: 'bold' },
+                            formatter: function(value, context) { 
+                                return context.datasetIndex === 0 ? value.note : '';
+                            }
+                        }
+                    },
+                    scales: {
+                        x: { min: 0, max: Math.max(10000, maxTime + 1000) },
+                        y: { 
+                            type: 'linear',
+                            display: true,
+                            position: 'left',
+                            min: 0, 
+                            max: maxDelay,
+                            title: { display: true, text: 'Delay (ms)' }
+                        },
+                        y1: {
+                            type: 'linear',
+                            display: true,
+                            position: 'right',
+                            min: 0,
+                            max: 1.5,
+                            title: { display: true, text: 'Velocity' },
+                            grid: { drawOnChartArea: false }
+                        }
+                    }
+                },
+                plugins: [ChartDataLabels]
+            });
+            
+            // Add score boxes
+            const timingScore = fits && fits[hand + 'DelayFit'] && datasets[0].data.length > 0 ? 
+                calculateScore(fits[hand + 'DelayFit'], datasets[0].data) : 0;
+            const velocityScore = fits && fits[hand + 'VelocityFit'] && datasets[1].data.length > 0 ? 
+                calculateScore(fits[hand + 'VelocityFit'], datasets[1].data) : 0;
+            const scoreText = timingScore != null && velocityScore != null ? 
+                `T:${timingScore.toFixed(1)}% V:${velocityScore.toFixed(1)}%` : '';
+            
+            if (scoreText && fits) {
+                setTimeout(() => {
+                    const canvas = document.getElementById(canvasId);
+                    const rect = canvas.getBoundingClientRect();
+                    const className = `score-box-${hand}`;
+                    
+                    // Remove existing score boxes for this chart
+                    document.querySelectorAll(`.${className}`).forEach(el => el.remove());
+                    
+                    const delayFit = fits[hand + 'DelayFit'];
+                    const velocityFit = fits[hand + 'VelocityFit'];
+                    const delayBgColor = hand === 'right' ? 'rgba(0,123,255,0.9)' : 'rgba(255,123,0,0.9)';
+                    const velocityBgColor = hand === 'right' ? 'rgba(0,255,123,0.9)' : 'rgba(255,0,123,0.9)';
+                    
+                    // Calculate chart area bounds (excluding axis labels)
+                    const chartAreaLeft = rect.left + 60; // Account for left axis
+                    const chartAreaRight = rect.right - 60; // Account for right axis
+                    const chartAreaWidth = chartAreaRight - chartAreaLeft;
+                    const chartAreaTop = rect.top + 20; // Account for top padding
+                    const chartAreaBottom = rect.bottom - 40; // Account for bottom axis
+                    const chartAreaHeight = chartAreaBottom - chartAreaTop;
+                    
+                    // Create single centered score box with both timing and velocity scores
+                    if ((delayFit && datasets[0].data.length > 0) || (velocityFit && datasets[1].data.length > 0)) {
+                        const timingScore = delayFit && datasets[0].data.length > 0 ? 
+                            calculateScore(delayFit, datasets[0].data) : null;
+                        const velocityScore = velocityFit && datasets[1].data.length > 0 ? 
+                            calculateScore(velocityFit, datasets[1].data) : null;
+                        
+                        // Build score text
+                        let scoreText = '';
+                        if (timingScore !== null) scoreText += `T:${timingScore.toFixed(1)}%`;
+                        if (timingScore !== null && velocityScore !== null) scoreText += ' ';
+                        if (velocityScore !== null) scoreText += `V:${velocityScore.toFixed(1)}%`;
+                        
+                        // Position at center of chart area
+                        const centerX = chartAreaLeft + chartAreaWidth / 2;
+                        const centerY = chartAreaTop + chartAreaHeight / 2;
+                        
+                        const scoreBox = document.createElement('div');
+                        scoreBox.className = className;
+                        scoreBox.style.cssText = `
+                            position: absolute;
+                            background: rgba(50,50,50,0.9);
+                            color: white;
+                            padding: 8px 12px;
+                            border-radius: 6px;
+                            font-size: 14px;
+                            font-weight: bold;
+                            pointer-events: none;
+                            z-index: 1000;
+                            left: ${centerX}px;
+                            top: ${centerY}px;
+                            transform: translate(-50%, -50%);
+                            text-align: center;
+                            border: 2px solid rgba(255,255,255,0.3);
+                        `;
+                        scoreBox.textContent = scoreText;
+                        document.body.appendChild(scoreBox);
+                    }
+                }, 50);
+            }
         }
+        
         function drawScatter() {
             // Calculate delays and assign hands
-            let dataRight = [];
-            let dataLeft = [];
-            let maxDelayR = 1000;
-            let maxDelayL = 1000;
+            let dataRightDelay = [];
+            let dataRightVelocity = [];
+            let dataLeftDelay = [];
+            let dataLeftVelocity = [];
+            let maxDelayR = 500;
+            let maxDelayL = 500;
             let hands = assignHands(noteKeys);
-            for (let i = 1; i < noteTimes.length; i++) {
-                let delay = noteTimes[i] - noteTimes[i-1];
-                if (hands[i] === 'right') {
-                    dataRight.push({x: noteTimes[i] - noteTimes[0], y: delay});
-                    if (delay > maxDelayR) maxDelayR = Math.ceil(delay / 1000) * 1000;
-                } else if (hands[i] === 'left') {
-                    dataLeft.push({x: noteTimes[i] - noteTimes[0], y: delay});
-                    if (delay > maxDelayL) maxDelayL = Math.ceil(delay / 1000) * 1000;
+            let lastTimeRight = null;
+            let lastTimeLeft = null;
+            let minTime = noteTimes.length > 0 ? 0 : 0;
+            let maxTime = noteTimes.length > 0 ? Math.max(...noteTimes) - noteTimes[0] : 10000;
+            
+            for (let i = 0; i < noteTimes.length; i++) {
+                let hand = hands[i];
+                let time = noteTimes[i];
+                let label = noteKeys[i] || '';
+                let velocity = noteVelocities[i] || 1;
+                if (hand === 'right') {
+                    if (lastTimeRight !== null) {
+                        let delay = time - lastTimeRight;
+                        dataRightDelay.push({x: time - noteTimes[0], y: delay, note: label});
+                        if (delay > maxDelayR) maxDelayR = Math.ceil(delay / 500) * 500;
+                    }
+                    dataRightVelocity.push({x: time - noteTimes[0], y: velocity, note: label});
+                    lastTimeRight = time;
+                } else if (hand === 'left') {
+                    if (lastTimeLeft !== null) {
+                        let delay = time - lastTimeLeft;
+                        dataLeftDelay.push({x: time - noteTimes[0], y: delay, note: label});
+                        if (delay > maxDelayL) maxDelayL = Math.ceil(delay / 500) * 500;
+                    }
+                    dataLeftVelocity.push({x: time - noteTimes[0], y: velocity, note: label});
+                    lastTimeLeft = time;
                 }
             }
-            // Right hand chart
-            const ctx = document.getElementById('scatter').getContext('2d');
-            if (scatterChart) scatterChart.destroy();
-            scatterChart = new Chart(ctx, {
-                type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'Right Hand Delay (ms)',
-                        data: dataRight,
-                        backgroundColor: 'rgba(0,123,255,0.7)',
-                    }]
-                },
-                options: {
-                    animation: false,
-                    plugins: { title: { display: false } },
-                    scales: {
-                        x: {
-                            min: 0,
-                            max: 10000
-                        },
-                        y: {
-                            min: 0,
-                            max: maxDelayR
-                        }
-                    }
-                }
-            });
-            // Left hand chart
-            const ctxL = document.getElementById('scatterLeft').getContext('2d');
-            if (scatterChartLeft) scatterChartLeft.destroy();
-            scatterChartLeft = new Chart(ctxL, {
-                type: 'scatter',
-                data: {
-                    datasets: [{
-                        label: 'Left Hand Delay (ms)',
-                        data: dataLeft,
-                        backgroundColor: 'rgba(255,123,0,0.7)',
-                    }]
-                },
-                options: {
-                    animation: false,
-                    plugins: { title: { display: false } },
-                    scales: {
-                        x: {
-                            min: 0,
-                            max: 10000
-                        },
-                        y: {
-                            min: 0,
-                            max: maxDelayL
-                        }
-                    }
-                }
-            });
+            
+            // Prepare datasets for right hand chart
+            let rightDatasets = [{
+                label: 'Right Hand Delay (ms)',
+                data: dataRightDelay,
+                backgroundColor: 'rgba(0,123,255,0.7)',
+                yAxisID: 'y'
+            }, {
+                label: 'Right Hand Velocity',
+                data: dataRightVelocity,
+                backgroundColor: 'rgba(0,255,123,0.7)',
+                yAxisID: 'y1'
+            }];
+            
+            // Prepare datasets for left hand chart
+            let leftDatasets = [{
+                label: 'Left Hand Delay (ms)',
+                data: dataLeftDelay,
+                backgroundColor: 'rgba(255,123,0,0.7)',
+                yAxisID: 'y'
+            }, {
+                label: 'Left Hand Velocity',
+                data: dataLeftVelocity,
+                backgroundColor: 'rgba(255,0,123,0.7)',
+                yAxisID: 'y1'
+            }];
+            
+            // Create both charts using the common function
+            createChart('scatter', 'right', rightDatasets, maxDelayR, maxTime, window.chartFits);
+            createChart('scatterLeft', 'left', leftDatasets, maxDelayL, maxTime, window.chartFits);
         }
         drawScatter();
     </script>
