@@ -6,21 +6,47 @@
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
     <style>
+        body {
+            margin: 0;
+            padding: 10px;
+            font-family: Arial, sans-serif;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        .header {
+            height: 50px;
+            display: flex;
+            align-items: center;
+            gap: 20px;
+            margin-bottom: 10px;
+        }
+        .header h1 {
+            margin: 0;
+            font-size: 24px;
+        }
+        .chart-section {
+            height: calc((100vh - 70px) / 2);
+            margin-bottom: 5px;
+        }
+        .chart-section canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
     </style>
 </head>
 <body>
-    <h1>Piano Keyboard Delay Scatter</h1>
-    <div>
+    <div class="header">
+        <h1>Piano Keyboard Delay Scatter</h1>
         <button id="midi-btn">Connect MIDI</button>
         <span id="midi-status">MIDI not connected</span>
     </div>
-    <div style="margin-top:40px">
-        <canvas id="scatter" style="width:100%; height:50vh; display:block;"></canvas>
+    <div class="chart-section">
+        <canvas id="scatter"></canvas>
     </div>
-    <div style="margin-top:40px">
-        <canvas id="scatterLeft" style="width:100%; height:50vh; display:block;"></canvas>
+    <div class="chart-section">
+        <canvas id="scatterLeft"></canvas>
     </div>
-    <div id="score" style="position: fixed; top: 10px; left: 10px; background: rgba(255,255,255,0.9); padding: 10px; border-radius: 5px; font-family: monospace; white-space: pre-line; z-index: 1000;"></div>
     <div id="keyboard" style="display:none">
         <div class="key" data-note="C3">Z</div>
         <div class="key" data-note="D3">X</div>
@@ -454,7 +480,7 @@
             const velocityScore = fits && fits[hand + 'VelocityFit'] && datasets[1].data.length > 0 ? 
                 calculateScore(fits[hand + 'VelocityFit'], datasets[1].data) : 0;
             const scoreText = timingScore != null && velocityScore != null ? 
-                `T:${timingScore.toFixed(1)}% V:${velocityScore.toFixed(1)}%` : '';
+                `Timing:${timingScore.toFixed(1)}% \nPressure:${velocityScore.toFixed(1)}%` : '';
             
             if (scoreText && fits) {
                 setTimeout(() => {
@@ -487,10 +513,10 @@
                         
                         // Build score text
                         let scoreText = '';
-                        if (timingScore !== null) scoreText += `T:${timingScore.toFixed(1)}%`;
-                        if (timingScore !== null && velocityScore !== null) scoreText += ' ';
-                        if (velocityScore !== null) scoreText += `V:${velocityScore.toFixed(1)}%`;
-                        
+                        if (timingScore !== null) scoreText += `Timing: ${timingScore.toFixed(1)}%`;
+                        if (timingScore !== null && velocityScore !== null) scoreText += '\n';
+                        if (velocityScore !== null) scoreText += `Pressure: ${velocityScore.toFixed(1)}%`;
+
                         // Position at center of chart area
                         const centerX = chartAreaLeft + chartAreaWidth / 2;
                         const centerY = chartAreaTop + chartAreaHeight / 2;
@@ -512,6 +538,7 @@
                             transform: translate(-50%, -50%);
                             text-align: center;
                             border: 2px solid rgba(255,255,255,0.3);
+                            white-space: pre-line;
                         `;
                         scoreBox.textContent = scoreText;
                         document.body.appendChild(scoreBox);
