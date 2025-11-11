@@ -245,6 +245,11 @@
             drawScatter();
         }
         
+        function hideScoreBoxes() {
+            // Remove all existing score boxes
+            document.querySelectorAll('[class*="score-box-"]').forEach(el => el.remove());
+        }
+        
         function handleNoteInput(note, velocity = 1 + Math.random() * 0.3) {
             const now = Date.now();
             if (lastInputTime && now - lastInputTime > 2000) {
@@ -252,6 +257,9 @@
                 leftHand.clear();
                 window.chartFits = null;
             }
+            
+            // Hide score boxes immediately when a new note is played
+            hideScoreBoxes();
             
             if (scoreTimeout) clearTimeout(scoreTimeout);
             scoreTimeout = setTimeout(showScore, 2000);
