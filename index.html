@@ -177,8 +177,6 @@
         }
         
         function showScore() {
-            let hands = assignHands();
-            
             // Calculate delay data from Hand objects
             let dataRightDelay = [];
             let dataLeftDelay = [];
@@ -187,6 +185,16 @@
             let lastTimeRight = null;
             let lastTimeLeft = null;
             
+            // Calculate common start time
+            let startTime = 0;
+            if (rightHand.times.length > 0 && leftHand.times.length > 0) {
+                startTime = Math.min(rightHand.times[0], leftHand.times[0]);
+            } else if (rightHand.times.length > 0) {
+                startTime = rightHand.times[0];
+            } else if (leftHand.times.length > 0) {
+                startTime = leftHand.times[0];
+            }
+            
             // Process right hand data
             for (let i = 0; i < rightHand.times.length; i++) {
                 let time = rightHand.times[i];
@@ -194,9 +202,9 @@
                 
                 if (lastTimeRight !== null) {
                     let delay = time - lastTimeRight;
-                    dataRightDelay.push({x: time - rightHand.times[0], y: delay});
+                    dataRightDelay.push({x: time - startTime, y: delay});
                 }
-                dataRightVelocity.push({x: time - rightHand.times[0], y: velocity});
+                dataRightVelocity.push({x: time - startTime, y: velocity});
                 lastTimeRight = time;
             }
             
@@ -207,9 +215,9 @@
                 
                 if (lastTimeLeft !== null) {
                     let delay = time - lastTimeLeft;
-                    dataLeftDelay.push({x: time - leftHand.times[0], y: delay});
+                    dataLeftDelay.push({x: time - startTime, y: delay});
                 }
-                dataLeftVelocity.push({x: time - leftHand.times[0], y: velocity});
+                dataLeftVelocity.push({x: time - startTime, y: velocity});
                 lastTimeLeft = time;
             }
             
@@ -218,6 +226,12 @@
             leftHand.delayFit = calculateLineOfBestFit(dataLeftDelay, true);
             rightHand.velocityFit = calculateLineOfBestFit(dataRightVelocity, false);
             leftHand.velocityFit = calculateLineOfBestFit(dataLeftVelocity, false);
+            
+            // Debug logging
+            console.log('Left hand delay data:', dataLeftDelay);
+            console.log('Left hand delay fit:', leftHand.delayFit);
+            console.log('Left hand velocity data:', dataLeftVelocity);
+            console.log('Left hand velocity fit:', leftHand.velocityFit);
             
             // Store fits globally for chart rendering (for backward compatibility)
             window.chartFits = {
@@ -395,8 +409,8 @@
             if (fits) {
                 const delayFit = hand === 'right' ? fits.rightDelayFit : fits.leftDelayFit;
                 const velocityFit = hand === 'right' ? fits.rightVelocityFit : fits.leftVelocityFit;
-                const delayColor = hand === 'right' ? 'rgba(0,123,255,1)' : 'rgba(255,123,0,1)';
-                const velocityColor = hand === 'right' ? 'rgba(0,255,123,1)' : 'rgba(255,0,123,1)';
+                const delayColor = 'rgba(255,0,0,1)'; // Red for timing
+                const velocityColor = 'rgba(0,255,0,1)'; // Green for velocity
                 
                 if (delayFit && datasets[0].data.length > 0) {
                     datasets.push({
@@ -628,12 +642,12 @@
             let rightDatasets = [{
                 label: 'Right Hand Delay (ms)',
                 data: dataRightDelay,
-                backgroundColor: 'rgba(0,123,255,0.7)',
+                backgroundColor: 'rgba(255,0,0,0.7)', // Red for timing
                 yAxisID: 'y'
             }, {
                 label: 'Right Hand Velocity',
                 data: dataRightVelocity,
-                backgroundColor: 'rgba(0,255,123,0.7)',
+                backgroundColor: 'rgba(0,255,0,0.7)', // Green for velocity
                 yAxisID: 'y1'
             }];
             
@@ -641,12 +655,12 @@
             let leftDatasets = [{
                 label: 'Left Hand Delay (ms)',
                 data: dataLeftDelay,
-                backgroundColor: 'rgba(255,123,0,0.7)',
+                backgroundColor: 'rgba(255,0,0,0.7)', // Red for timing
                 yAxisID: 'y'
             }, {
                 label: 'Left Hand Velocity',
                 data: dataLeftVelocity,
-                backgroundColor: 'rgba(255,0,123,0.7)',
+                backgroundColor: 'rgba(0,255,0,0.7)', // Green for velocity
                 yAxisID: 'y1'
             }];
             
