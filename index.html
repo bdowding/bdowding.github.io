@@ -322,9 +322,12 @@
                     return 'right';
                 }
             } else {
-                // Both hands are now active - assign to nearest hand
-                let distToRight = rightHand.distanceTo(midiNote);
-                let distToLeft = leftHand.distanceTo(midiNote);
+                // Both hands are now active - compare to most recent note from each hand
+                let lastRightNote = rightHand.getLastNote();
+                let lastLeftNote = leftHand.getLastNote();
+                
+                let distToRight = halfStepDistance(lastRightNote, midiNote);
+                let distToLeft = halfStepDistance(lastLeftNote, midiNote);
                 
                 if (distToRight <= distToLeft) {
                     rightHand.addNote(midiNote, time, velocity);
