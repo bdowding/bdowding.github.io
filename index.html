@@ -15,18 +15,14 @@
             overflow: hidden;
         }
         .header {
-            height: 50px;
+            height: 30px;
             display: flex;
             align-items: center;
             gap: 20px;
             margin-bottom: 10px;
         }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
         .chart-section {
-            height: calc((100vh - 70px) / 2);
+            height: calc((100vh - 40px) / 2);
             margin-bottom: 5px;
         }
         .chart-section canvas {
@@ -37,9 +33,7 @@
 </head>
 <body>
     <div class="header">
-        <h1>Piano Keyboard Delay Scatter</h1>
-        <button id="midi-btn">Connect MIDI</button>
-        <span id="midi-status">MIDI not connected</span>
+        <span id="midi-status">Connecting to MIDI...</span>
     </div>
     <div class="chart-section">
         <canvas id="scatter"></canvas>
@@ -65,9 +59,61 @@
         <div class="key" data-note="C5">K</div>
     </div>
     <script>
-        let noteTimes = [];
-        let noteKeys = [];
-        let noteVelocities = [];
+        // Hand class to represent one hand's data
+        class Hand {
+            constructor(name) {
+                this.name = name;
+                this.notes = [];        // MIDI note numbers
+                this.times = [];        // Timestamps
+                this.velocities = [];   // Velocity values
+                this.delayData = [];    // Calculated delay data points
+                this.velocityData = []; // Calculated velocity data points
+                this.delayFit = null;   // Line of best fit for delays
+                this.velocityFit = null; // Line of best fit for velocities
+            }
+            
+            addNote(midiNote, time, velocity) {
+                this.notes.push(midiNote);
+                this.times.push(time);
+                this.velocities.push(velocity);
+            }
+            
+            clear() {
+                this.notes = [];
+                this.times = [];
+                this.velocities = [];
+                this.delayData = [];
+                this.velocityData = [];
+                this.delayFit = null;
+                this.velocityFit = null;
+            }
+            
+            getLastNote() {
+                return this.notes.length > 0 ? this.notes[this.notes.length - 1] : null;
+            }
+            
+            getRange() {
+                if (this.notes.length === 0) return { min: null, max: null };
+                return {
+                    min: Math.min(...this.notes),
+                    max: Math.max(...this.notes)
+                };
+            }
+            
+            distanceTo(midiNote) {
+                if (this.notes.length === 0) return Infinity;
+                const range = this.getRange();
+                return Math.min(
+                    Math.abs(midiNote - range.min),
+                    Math.abs(midiNote - range.max)
+                );
+            }
+        }
+        
+        // Create two hand instances
+        let rightHand = new Hand('right');
+        let leftHand = new Hand('left');
+        
         let scatterChart = null;
         let scatterChartLeft = null;
         let lastInputTime = null;
@@ -131,7 +177,9 @@
         }
         
         function showScore() {
-            let hands = assignHands(noteKeys);
+            let hands = assignHands();
+            
+            // Calculate delay data from Hand objects
             let dataRightDelay = [];
             let dataLeftDelay = [];
             let dataRightVelocity = [];
@@ -139,39 +187,44 @@
             let lastTimeRight = null;
             let lastTimeLeft = null;
             
-            for (let i = 0; i < noteTimes.length; i++) {
-                let hand = hands[i];
-                let time = noteTimes[i];
-                let velocity = noteVelocities[i];
-                if (hand === 'right') {
-                    if (lastTimeRight !== null) {
-                        let delay = time - lastTimeRight;
-                        dataRightDelay.push({x: time - noteTimes[0], y: delay});
-                    }
-                    dataRightVelocity.push({x: time - noteTimes[0], y: velocity});
-                    lastTimeRight = time;
-                } else if (hand === 'left') {
-                    if (lastTimeLeft !== null) {
-                        let delay = time - lastTimeLeft;
-                        dataLeftDelay.push({x: time - noteTimes[0], y: delay});
-                    }
-                    dataLeftVelocity.push({x: time - noteTimes[0], y: velocity});
-                    lastTimeLeft = time;
+            // Process right hand data
+            for (let i = 0; i < rightHand.times.length; i++) {
+                let time = rightHand.times[i];
+                let velocity = rightHand.velocities[i];
+                
+                if (lastTimeRight !== null) {
+                    let delay = time - lastTimeRight;
+                    dataRightDelay.push({x: time - rightHand.times[0], y: delay});
                 }
+                dataRightVelocity.push({x: time - rightHand.times[0], y: velocity});
+                lastTimeRight = time;
             }
             
-            // Calculate fits
-            let rightDelayFit = calculateLineOfBestFit(dataRightDelay, true); // Force zero gradient for timing
-            let leftDelayFit = calculateLineOfBestFit(dataLeftDelay, true);
-            let rightVelocityFit = calculateLineOfBestFit(dataRightVelocity, false);
-            let leftVelocityFit = calculateLineOfBestFit(dataLeftVelocity, false);
+            // Process left hand data
+            for (let i = 0; i < leftHand.times.length; i++) {
+                let time = leftHand.times[i];
+                let velocity = leftHand.velocities[i];
+                
+                if (lastTimeLeft !== null) {
+                    let delay = time - lastTimeLeft;
+                    dataLeftDelay.push({x: time - leftHand.times[0], y: delay});
+                }
+                dataLeftVelocity.push({x: time - leftHand.times[0], y: velocity});
+                lastTimeLeft = time;
+            }
             
-            // Store fits globally for chart rendering
+            // Calculate fits and store in Hand objects
+            rightHand.delayFit = calculateLineOfBestFit(dataRightDelay, true);
+            leftHand.delayFit = calculateLineOfBestFit(dataLeftDelay, true);
+            rightHand.velocityFit = calculateLineOfBestFit(dataRightVelocity, false);
+            leftHand.velocityFit = calculateLineOfBestFit(dataLeftVelocity, false);
+            
+            // Store fits globally for chart rendering (for backward compatibility)
             window.chartFits = {
-                rightDelayFit,
-                leftDelayFit,
-                rightVelocityFit,
-                leftVelocityFit
+                rightDelayFit: rightHand.delayFit,
+                leftDelayFit: leftHand.delayFit,
+                rightVelocityFit: rightHand.velocityFit,
+                leftVelocityFit: leftHand.velocityFit
             };
             
             // Redraw charts with fit lines
@@ -181,9 +234,8 @@
         function handleNoteInput(note, velocity = 1 + Math.random() * 0.3) {
             const now = Date.now();
             if (lastInputTime && now - lastInputTime > 2000) {
-                noteTimes = [];
-                noteKeys = [];
-                noteVelocities = [];
+                rightHand.clear();
+                leftHand.clear();
                 window.chartFits = null;
             }
             
@@ -191,32 +243,38 @@
             scoreTimeout = setTimeout(showScore, 2000);
             
             lastInputTime = now;
-            noteTimes.push(now);
-            noteKeys.push(note);
-            noteVelocities.push(velocity);
+            let midiNote = typeof note === 'string' ? noteToMidi(note) : note;
+            
+            // Add note to appropriate hand based on current assignment logic
+            assignHands(midiNote, now, velocity);
             drawScatter();
         }
-        // MIDI setup
+        // MIDI setup - Auto-connect on page load
         let midiAccess = null;
-        document.getElementById('midi-btn').onclick = async function() {
+        
+        async function connectMIDI() {
             if (navigator.requestMIDIAccess) {
-                midiAccess = await navigator.requestMIDIAccess();
-                document.getElementById('midi-status').textContent = 'MIDI connected';
-                for (let input of midiAccess.inputs.values()) {
-                    input.onmidimessage = function(msg) {
-                        const [cmd, noteNum, velocity] = msg.data;
-                        if (cmd === 144 && velocity > 0) {
-                            const midiToNote = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
-                            let octave = Math.floor(noteNum / 12) - 1;
-                            let name = midiToNote[noteNum % 12] + octave;
-                            handleNoteInput(name, velocity / 127);
-                        }
-                    };
+                try {
+                    midiAccess = await navigator.requestMIDIAccess();
+                    document.getElementById('midi-status').textContent = 'MIDI connected';
+                    for (let input of midiAccess.inputs.values()) {
+                        input.onmidimessage = function(msg) {
+                            const [cmd, noteNum, velocity] = msg.data;
+                            if (cmd === 144 && velocity > 0) {
+                                handleNoteInput(noteNum, velocity / 127); // Pass MIDI number directly
+                            }
+                        };
+                    }
+                } catch (error) {
+                    document.getElementById('midi-status').textContent = 'MIDI connection failed';
                 }
             } else {
                 document.getElementById('midi-status').textContent = 'Web MIDI API not supported';
             }
-        };
+        }
+        
+        // Auto-connect when page loads
+        window.addEventListener('load', connectMIDI);
         const keyMap = {
             'Z': 'C3', 'X': 'D3', 'C': 'E3', 'V': 'F3', 'B': 'G3', 'N': 'A3', 'M': 'B3',
             'A': 'C4', 'S': 'D4', 'D': 'E4', 'F': 'F4', 'G': 'G4', 'H': 'A4', 'J': 'B4', 'K': 'C5'
@@ -230,99 +288,52 @@
             let octave = parseInt(match[2]);
             return 12 * octave + noteNames[name];
         }
-        function halfStepDistance(note1, note2) {
-            let midi1 = noteToMidi(note1);
-            let midi2 = noteToMidi(note2);
+        
+        function midiToNote(midiNum) {
+            const noteNames = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"];
+            let octave = Math.floor(midiNum / 12) - 1;
+            let name = noteNames[midiNum % 12];
+            return name + octave;
+        }
+        
+        function halfStepDistance(midi1, midi2) {
             if (midi1 === null || midi2 === null) return null;
             return Math.abs(midi2 - midi1);
         }
-        function assignHands(keys) {
-            if (keys.length === 0) return [];
-            let hands = [];
-            let rightHand = [keys[0]];
-            let leftHand = [];
-            hands.push('right');
+        function assignHands(midiNote, time, velocity) {
+            // If this is the first note, assign to right hand
+            if (rightHand.notes.length === 0 && leftHand.notes.length === 0) {
+                rightHand.addNote(midiNote, time, velocity);
+                return 'right';
+            }
             
-            for (let i = 1; i < keys.length; i++) {
-                let note = keys[i];
-                if (!note) { hands.push('unknown'); continue; }
+            // If left hand is still empty, check if this note creates the split
+            if (leftHand.notes.length === 0) {
+                let lastRightNote = rightHand.getLastNote();
+                let distance = halfStepDistance(lastRightNote, midiNote);
                 
-                // If left hand is empty, use right hand rules
-                if (leftHand.length === 0) {
-                    let prevNote = rightHand[rightHand.length-1];
-                    let dist = halfStepDistance(prevNote, note);
-                    if (dist !== null && dist <= 10) { // 5 steps = 10 half-steps
-                        hands.push('right');
-                        rightHand.push(note);
-                    } else {
-                        hands.push('left');
-                        leftHand.push(note);
-                        
-                        // Reassign previous notes based on new ranges
-                        let rightMidis = rightHand.map(noteToMidi);
-                        let leftMidis = leftHand.map(noteToMidi);
-                        let rightMin = Math.min(...rightMidis);
-                        let leftMax = Math.max(...leftMidis);
-                        
-                        // If ranges overlap, reassign notes
-                        if (rightMin <= leftMax) {
-                            let allNotes = [];
-                            let allIndices = [];
-                            for (let j = 0; j <= i; j++) {
-                                if (keys[j]) {
-                                    allNotes.push({note: keys[j], index: j, midi: noteToMidi(keys[j])});
-                                }
-                            }
-                            allNotes.sort((a, b) => a.midi - b.midi);
-                            
-                            // Split at midpoint
-                            let midpoint = Math.floor(allNotes.length / 2);
-                            rightHand = [];
-                            leftHand = [];
-                            
-                            for (let j = 0; j < allNotes.length; j++) {
-                                if (j < midpoint) {
-                                    leftHand.push(allNotes[j].note);
-                                    hands[allNotes[j].index] = 'left';
-                                } else {
-                                    rightHand.push(allNotes[j].note);
-                                    hands[allNotes[j].index] = 'right';
-                                }
-                            }
-                        }
-                    }
+                if (distance !== null && distance > 5) {
+                    // This is the split point - assign this note to left hand
+                    leftHand.addNote(midiNote, time, velocity);
+                    return 'left';
                 } else {
-                    // Both hands active - assign to closest hand or enforce ranges
-                    let rightMidis = rightHand.map(noteToMidi);
-                    let leftMidis = leftHand.map(noteToMidi);
-                    let rightMin = Math.min(...rightMidis);
-                    let leftMax = Math.max(...leftMidis);
-                    let noteMidi = noteToMidi(note);
-                    
-                    if (noteMidi > rightMin) {
-                        hands.push('right');
-                        rightHand.push(note);
-                    } else if (noteMidi < leftMax) {
-                        hands.push('left');
-                        leftHand.push(note);
-                    } else {
-                        // In overlap zone - assign to closest recent note
-                        let prevRight = rightHand[rightHand.length-1];
-                        let prevLeft = leftHand[leftHand.length-1];
-                        let distRight = halfStepDistance(prevRight, note);
-                        let distLeft = halfStepDistance(prevLeft, note);
-                        
-                        if (distRight <= distLeft) {
-                            hands.push('right');
-                            rightHand.push(note);
-                        } else {
-                            hands.push('left');
-                            leftHand.push(note);
-                        }
-                    }
+                    // Still within 5 steps, stays with right hand
+                    rightHand.addNote(midiNote, time, velocity);
+                    return 'right';
+                }
+            } else {
+                // Both hands are now active - assign to nearest hand
+                let distToRight = rightHand.distanceTo(midiNote);
+                let distToLeft = leftHand.distanceTo(midiNote);
+                
+                if (distToRight <= distToLeft) {
+                    rightHand.addNote(midiNote, time, velocity);
+                    return 'right';
+                } else {
+                    leftHand.addNote(midiNote, time, velocity);
+                    return 'left';
                 }
             }
-            return hands;
         }
         document.addEventListener('keydown', e => {
             const note = keyMap[e.key.toUpperCase()];
@@ -548,42 +559,67 @@
         }
         
         function drawScatter() {
-            // Calculate delays and assign hands
+            // Calculate delays from Hand objects
             let dataRightDelay = [];
             let dataRightVelocity = [];
             let dataLeftDelay = [];
             let dataLeftVelocity = [];
             let maxDelayR = 500;
             let maxDelayL = 500;
-            let hands = assignHands(noteKeys);
             let lastTimeRight = null;
             let lastTimeLeft = null;
-            let minTime = noteTimes.length > 0 ? 0 : 0;
-            let maxTime = noteTimes.length > 0 ? Math.max(...noteTimes) - noteTimes[0] : 10000;
             
-            for (let i = 0; i < noteTimes.length; i++) {
-                let hand = hands[i];
-                let time = noteTimes[i];
-                let label = noteKeys[i] || '';
-                let velocity = noteVelocities[i] || 1;
-                if (hand === 'right') {
-                    if (lastTimeRight !== null) {
-                        let delay = time - lastTimeRight;
-                        dataRightDelay.push({x: time - noteTimes[0], y: delay, note: label});
-                        if (delay > maxDelayR) maxDelayR = Math.ceil(delay / 500) * 500;
-                    }
-                    dataRightVelocity.push({x: time - noteTimes[0], y: velocity, note: label});
-                    lastTimeRight = time;
-                } else if (hand === 'left') {
-                    if (lastTimeLeft !== null) {
-                        let delay = time - lastTimeLeft;
-                        dataLeftDelay.push({x: time - noteTimes[0], y: delay, note: label});
-                        if (delay > maxDelayL) maxDelayL = Math.ceil(delay / 500) * 500;
-                    }
-                    dataLeftVelocity.push({x: time - noteTimes[0], y: velocity, note: label});
-                    lastTimeLeft = time;
-                }
+            // Calculate time offset (first note time)
+            let startTime = 0;
+            if (rightHand.times.length > 0 && leftHand.times.length > 0) {
+                startTime = Math.min(rightHand.times[0], leftHand.times[0]);
+            } else if (rightHand.times.length > 0) {
+                startTime = rightHand.times[0];
+            } else if (leftHand.times.length > 0) {
+                startTime = leftHand.times[0];
             }
+            
+            // Process right hand data
+            for (let i = 0; i < rightHand.notes.length; i++) {
+                let time = rightHand.times[i];
+                let midiNote = rightHand.notes[i];
+                let label = midiToNote(midiNote);
+                let velocity = rightHand.velocities[i];
+                
+                if (lastTimeRight !== null) {
+                    let delay = time - lastTimeRight;
+                    dataRightDelay.push({x: time - startTime, y: delay, note: label});
+                    if (delay > maxDelayR) maxDelayR = Math.ceil(delay / 500) * 500;
+                }
+                dataRightVelocity.push({x: time - startTime, y: velocity, note: label});
+                lastTimeRight = time;
+            }
+            
+            // Process left hand data
+            for (let i = 0; i < leftHand.notes.length; i++) {
+                let time = leftHand.times[i];
+                let midiNote = leftHand.notes[i];
+                let label = midiToNote(midiNote);
+                let velocity = leftHand.velocities[i];
+                
+                if (lastTimeLeft !== null) {
+                    let delay = time - lastTimeLeft;
+                    dataLeftDelay.push({x: time - startTime, y: delay, note: label});
+                    if (delay > maxDelayL) maxDelayL = Math.ceil(delay / 500) * 500;
+                }
+                dataLeftVelocity.push({x: time - startTime, y: velocity, note: label});
+                lastTimeLeft = time;
+            }
+            
+            // Calculate max time for chart scaling
+            let maxTime = 10000;
+            if (rightHand.times.length > 0 || leftHand.times.length > 0) {
+                let allTimes = [...rightHand.times, ...leftHand.times];
+                maxTime = Math.max(...allTimes) - startTime;
+            }
+            
+            console.log('Right hand data points:', dataRightDelay.length, dataRightVelocity.length);
+            console.log('Left hand data points:', dataLeftDelay.length, dataLeftVelocity.length);
             
             // Prepare datasets for right hand chart
             let rightDatasets = [{
